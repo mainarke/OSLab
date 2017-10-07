@@ -1,0 +1,143 @@
+\documentclass[11pt]{article}
+
+\usepackage{fullpage} % Package to use full page
+\usepackage{parskip} % Package to tweak paragraph skipping
+\usepackage{tikz} % Package for drawing
+\usepackage{amsmath}
+\usepackage[breaklinks]{hyperref}
+\usepackage{url}
+\usepackage{breakurl} 
+\usepackage{enumerate}
+\usepackage{subcaption}
+\usepackage{mathptmx}
+\usepackage{epsfig}
+\usepackage{multirow}
+\usepackage{wrapfig}
+\usepackage{listings}
+
+\definecolor{mGreen}{rgb}{0,0.6,0}
+\definecolor{mGray}{rgb}{0.5,0.5,0.5}
+\definecolor{mPurple}{rgb}{0.58,0,0.82}
+\definecolor{backgroundColour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{CStyle}{
+    backgroundcolor=\color{backgroundColour},   
+    commentstyle=\color{mGreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{mGray},
+    stringstyle=\color{mPurple},
+    basicstyle=\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2,
+    language=C
+}
+
+%\usepackage{minipage}
+\def \hfillx {\hspace*{-\textwidth} \hfill}
+
+\title{CSE 5433 OS Laboratory \\ Lab3 Report}
+\author{Group 8 \\ Sixiang Ma, Xiaokuan Zhang}
+\date{10/09/2017}
+
+
+
+\begin{document}
+
+\maketitle
+
+\section{Objectives}
+Implement the fair-share scheduling. Fair-share scheduling is to
+equally distribute CPU time among users or groups in the system, as opposed to equal distribution among processes. After implementing the scheduler, we need to write kernel instrumentation code for profiling
+the kernel performance in terms of the scheduler’s behavior. Also, we are required to write some scripts to post-process the profiled data and plot figure(s).
+
+\section{Scheduling Policy Design}
+To implement this scheduling policy, there are several key questions we need to answer. To solve these questions, in general, there are two approaches to implement the fair-share scheduling. 
+\subsection{Key Questions}
+\begin{enumerate}[(a)]
+\item How to implement a system call to change the scheduling policy at run-time?
+\item How to know how many processes the current user has?
+\item How to calculate the time slice to reflect the new policy?
+\end{enumerate}
+
+\subsection{Approach 1}
+The first approach is to maintain a global flag indicating whether we should use the new policy. When the flag is set, calculate the timeslices of processes with \texttt{SCHED\_NORMAL} policy according to the number of processes the current user has. For example, if the number is N, the new timeslice would be:
+\begin{equation}
+\text{New Timeslice} = \frac{\text{Old Timeslice}}{N}
+\end{equation}
+\subsection{Approach 2}
+The second approach is to implement a new policy \texttt{SCHED\_CFS}. When encounter a process with such a policy, calculate the timeslice accordingly. Also, it is required to keep track of how many \texttt{SCHED\_CFS} processes are currently running for each user.
+
+\section{Scheduling Policy Implementation}
+We implemented Approach 1, which is a lighter-weight approach compared to Approach 2. We will explain the implementation in detail and show how we solve the key questions.
+\subsection{Answers to Key Questions}
+\subsubsection{Adding a System Call to Set Policy}
+We added a global flag, $sched\_policy\_flag$. If $sched\_policy\_flag == 1$, we schedule \texttt{SCHED\_NORMAL} processes using our new policy.
+\begin{lstlisting}[style=CStyle]
+int sched_policy_flag = 0;
+EXPORT_SYMBOL(sched_policy_flag);
+\end{lstlisting}
+
+Moreover, we add a system call to switch the flag between 0 and 1. We also change syscall-related files accordingly. 
+
+\begin{lstlisting}[style=CStyle]
+asmlinkage long sys_sched_policy_switch(void) {
+        sched_policy_flag = 1-sched_policy_flag;
+        printk("SCHED FLAG: %d\n",sched_policy_flag);
+        return 0;
+}
+\end{lstlisting}
+
+\subsubsection{Finding the Number of Processes}
+Suppose current process is $*p$. We utilized $task\_struct$ and $user\_struct$. We read (p$\rightarrow$user$\rightarrow$processes).counter (denoted $N$) to get the process count for the current user. However, this counter covers all the processes, including two irrelevant process: $sshd$ and $bash$. So we need to use $N-2$ to get the true value.
+
+\subsubsection{Calculating the New Timeslice}
+We modified the timeslice calculation mechanism to reflect the new policy. If 1) the flag is set; 2) the user id is in the test range (601 to 605); 3) it is a \texttt{SCHED\_NORMAL} process, we update the timeslice using our new scheme.
+\begin{lstlisting}[style=CStyle]
+static unsigned int task_timeslice(task_t *p)
+{
+    int N;
+        if (p->static_prio < NICE_TO_PRIO(0))
+                return SCALE_PRIO(DEF_TIMESLICE*4, p->static_prio);
+        else
+                if (sched_policy_flag == 0)
+                    return SCALE_PRIO(DEF_TIMESLICE, p->static_prio);
+                else
+                {
+                    if (((int)(p->user->uid) > 600) && ((int)(p->user->uid) < 606)) 
+                    //test range
+                    {
+                        N = (p->user->processes).counter;
+                        if (N < 3) N = 3;
+                        
+                        return SCALE_PRIO(DEF_TIMESLICE/(N-2), p->static_prio);
+                    }
+                    else
+                        return SCALE_PRIO(DEF_TIMESLICE, p->static_prio);
+                }
+}
+\end{lstlisting}
+
+\section{Kernel Profiling Design}
+
+\section{Kernel Profiling Implementation}
+
+\section{Evaluation}
+%\newpage
+\bibliographystyle{plain}
+\bibliography{Group8}
+\end{document}
+
+
+
+
+
+
+
