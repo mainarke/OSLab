@@ -162,7 +162,7 @@ int main() {
 }
 \end{lstlisting}
 
-By invoking $sched\_profile\_switch()$, the kernel cleans up the data for storing accumulative CPU time and starts to profile. By invoking $sched\_profile\_switch()$ again, the kernel dumps the statistics as follows and stops profiling.
+By invoking $sched\_profile\_switch()$, the kernel cleans up the data for storing accumulative CPU time and starts to profile. By invoking $sched\_profile\_switch()$ again, the kernel dumps the statistics to stdout as follows and stops profiling.
 
 \begin{lstlisting}[style=CStyle]
 uid = 601
@@ -179,20 +179,20 @@ uid = 602
 
 To evaluate the correctness of the new scheduling policy, we lauchned different numbers of processes (3-6) for UserA, UserB, UserC, UserD and performed performance profiling about 60 seconds. The results are shown in Table~\ref{tab:result}. We can observe that CPU time is equally distributed among users. In addition, for a given user, CPU time is equally distributed among its processes. These results proved that the new scheduling policy works correctly as expected. 
 
-\begin{table*}[htbp]
+\begin{table}[htbp]
 \centering
 \begin{tabular}{ |c|c|c|c|c|c|c|c| }
 \hline
 & Process 1 & Process 2 & Process 3 & Process 4 & Process 5 & Process 6 & Sum \\ \hline
-User A & 8.33 & 8.33 & 8.33 & 0.00 & 0.00 & 0.00 & 24.99 \\ \hline
-User B & 6.35 & 6.35 & 6.35 & 6.32 & 0.00 & 0.00 & 25.37 \\ \hline
-User C & 5.05 & 5.08 & 5.08 & 5.08 & 5.08 & 0.00 & 25.37 \\ \hline
+User A & 8.33 & 8.33 & 8.33 & N/A & N/A & N/A & 24.99 \\ \hline
+User B & 6.35 & 6.35 & 6.35 & 6.32 & N/A & N/A & 25.37 \\ \hline
+User C & 5.05 & 5.08 & 5.08 & 5.08 & 5.08 & N/A & 25.37 \\ \hline
 User D & 4.06 & 4.04 & 4.04 & 4.04 & 4.04 & 4.04 & 24.26 \\ \hline
 \end{tabular}
-\caption{CPU time percentage of processes for each user.}
+\caption{CPU time percentage (\%) of processes for each user.}
 \vspace{-.15in}
 \label{tab:result}
-\end{table*}
+\end{table}
 
 %\newpage
 %\bibliographystyle{plain}
