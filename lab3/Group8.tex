@@ -125,13 +125,77 @@ static unsigned int task_timeslice(task_t *p)
 }
 \end{lstlisting}
 
-\section{Kernel Profiling Design}
+\section{Kernel Profiling}
 
-\section{Kernel Profiling Implementation}
+\subsection{Profile CPU Time in the Kernel}
+Now that the new scheduling policy has been implemented, we need to check its correctness in that CPU time can be equally distributed among users in the system. To this end, we have to profile the kernel performance in terms of how CPU time is assigned to processes among a group of users.  
+
+Specifically, in $kernel/sched.c$, we declare a new struct called $struct$ $pid\_cpu\_stat$ to store the accumulative CPU time that a process has used during a period of time. Also, we declare and define another struct called $struct$ $uid\_cpu\_stat$ $uid\_stats$ to collect all the $pid\_cpu\_stat$ belonging to each system user. 
+
+\begin{lstlisting}[style=CStyle]
+#define STAT_ARRAY_MAX 10
+
+struct pid_cpu_stat {
+        int pid;
+        unsigned long accum_run_time;
+};
+   
+struct uid_cpu_stat {
+        unsigned int uid;
+        struct pid_cpu_stat pid_stats[STAT_ARRAY_MAX];
+};
+
+struct uid_cpu_stat uid_stats[STAT_ARRAY_MAX];
+EXPORT_SYMBOL(uid_stats);
+\end{lstlisting}
+
+When a process is going to be scheduled out, we add the local variable $run\_time$ in the $schedule()$ function to the $accum\_run\_time$ variable of the corresponding $pid\_cpu\_stat$ which this process belongs to. The $run\_time$ varaible  stores the difference between the time a process is scheduled in and scheduled out. 
+
+\subsection{Manipulate Profiling by a System Call}
+
+To facilitate users to start and stop/dump $struct$ $uid\_cpu\_stat$ $uid\_stats$ in the kernel, we add a new system call named $sys\_sched\_profile\_switch$. Base on this system call, it is easy for users to manipulate the profiling functionality as shown in the following lines of code:
+
+\begin{lstlisting}[style=CStyle]
+int main() {
+        sched_profile_switch(); 
+        return 0;
+}
+\end{lstlisting}
+
+By invoking $sched\_profile\_switch()$, the kernel cleans up the data for storing accumulative CPU time and starts to profile. By invoking $sched\_profile\_switch()$ again, the kernel dumps the statistics as follows and stops profiling.
+
+\begin{lstlisting}[style=CStyle]
+uid = 601
+    pid = 3439, accum_run_time = 11503000
+    pid = 3440, accum_run_time = 11500000
+
+uid = 602
+    pid = 3443, accum_run_time = 7611000
+    pid = 3442, accum_run_time = 7590000
+    pid = 3441, accum_run_time = 7590000
+\end{lstlisting}
 
 \section{Evaluation}
+
+To evaluate the correctness of the new scheduling policy, we lauchned different numbers of processes (3-6) for UserA, UserB, UserC, UserD and performed performance profiling about 60 seconds. The results are shown in Table~\ref{tab:result}. We can observe that CPU time is equally distributed among users. In addition, for a given user, CPU time is equally distributed among its processes. These results proved that the new scheduling policy works correctly as expected. 
+
+\begin{table*}[htbp]
+\centering
+\begin{tabular}{ |c|c|c|c|c|c|c|c| }
+\hline
+& Process 1 & Process 2 & Process 3 & Process 4 & Process 5 & Process 6 & Sum \\ \hline
+User A & 8.33 & 8.33 & 8.33 & 0.00 & 0.00 & 0.00 & 24.99 \\ \hline
+User B & 6.35 & 6.35 & 6.35 & 6.32 & 0.00 & 0.00 & 25.37 \\ \hline
+User C & 5.05 & 5.08 & 5.08 & 5.08 & 5.08 & 0.00 & 25.37 \\ \hline
+User D & 4.06 & 4.04 & 4.04 & 4.04 & 4.04 & 4.04 & 24.26 \\ \hline
+\end{tabular}
+\caption{CPU time percentage of processes for each user.}
+\vspace{-.15in}
+\label{tab:result}
+\end{table*}
+
 %\newpage
-\bibliographystyle{plain}
+%\bibliographystyle{plain}
 \bibliography{Group8}
 \end{document}
 
