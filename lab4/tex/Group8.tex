@@ -1,0 +1,227 @@
+\documentclass[11pt]{article}
+
+\usepackage{fullpage} % Package to use full page
+\usepackage{parskip} % Package to tweak paragraph skipping
+\usepackage{tikz} % Package for drawing
+\usepackage{amsmath}
+\usepackage[breaklinks]{hyperref}
+\usepackage{url}
+\usepackage{breakurl} 
+\usepackage{enumerate}
+\usepackage{subcaption}
+\usepackage{mathptmx}
+\usepackage{epsfig}
+\usepackage{multirow}
+\usepackage{wrapfig}
+\usepackage{listings}
+
+\definecolor{mGreen}{rgb}{0,0.6,0}
+\definecolor{mGray}{rgb}{0.5,0.5,0.5}
+\definecolor{mPurple}{rgb}{0.58,0,0.82}
+\definecolor{backgroundColour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{CStyle}{
+    backgroundcolor=\color{backgroundColour},   
+    commentstyle=\color{mGreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{mGray},
+    stringstyle=\color{mPurple},
+    basicstyle=\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2,
+    language=C
+}
+
+%\usepackage{minipage}
+\def \hfillx {\hspace*{-\textwidth} \hfill}
+
+\title{CSE 5433 OS Laboratory \\ Lab4 Report}
+\author{Group 8 \\ Sixiang Ma, Xiaokuan Zhang}
+\date{11/01/2017}
+
+
+
+\begin{document}
+
+\maketitle
+
+\section{Objectives}
+In lab4, our goal is to implement partial functions of process checkpointing at the system level. In particular, this lab focuses on checkpointing memory data for a process. It includes three components: 
+\begin{enumerate}[(a)]
+\item implement the basic function of checkpointing a memory range specified by a user program;
+\item design an incremental checkpointing scheme;
+\item implement the incremental checkpointing scheme.
+\end{enumerate}
+
+\section{Basic Checkpointing Scheme}
+\subsection{High-level Design}
+On a high level, we need to implement a system call like previous labs, which will be called by a userspace process for checkpointing its memory within certain range (begin, end). In that system call, there are mainly two steps we should do:
+\begin{enumerate}[(a)]
+\item Traverse the vitual memory area of the process, page by page. If a page is fully within the range, then we need to output it to a file.
+\item Output corresponding pages to a file.
+\end{enumerate}
+\subsection{Implementation}
+\subsubsection{Creating A System Call}
+This step is similar to what we did in previous labs. we defined two global variables $cp\_start, cp\_end$ to store the requested range for checkpointing. Also, we defined a $file\_count$ variable to store the current file counter, and a $filename$ char array to store the current filename. After updating the $cp\_start, cp\_end$, we call the $traverse()$ function to do the real checkpointing. 
+
+\begin{lstlisting}[style=CStyle]
+unsigned long cp_start;
+unsigned long cp_end;
+int file_count = 0;
+char filename[16];
+
+asmlinkage long sys_cp_range(unsigned long *start_addr, unsigned long *end_addr){
+    unsigned long startnow;
+    unsigned long endnow;
+    printk("enter cp_range\n");
+    if (copy_from_user(&startnow, start_addr, sizeof(*start_addr)))
+        return -EFAULT;
+    if (copy_from_user(&endnow, end_addr, sizeof(*end_addr)))
+        return -EFAULT;
+    printk("\ncp_range: %lx, %lx\n\n", startnow, endnow);
+    cp_start = startnow;
+    cp_end = endnow;
+    traverse();
+    printk("exit cp_range\n");
+    ++file_count;
+    return 0;
+}
+\end{lstlisting}
+
+\subsubsection{Traversing the Memory Area of a Process}
+We can use \texttt{area = current->mm->mmap} to get a \texttt{vm\_area\_struct*}, which points to the start of the vm area of the current process. Since it is a linked list, we can use \texttt{area = area->vm\_next} to traverse this list to visit each vm area.
+
+For each vm area, we visit each page to determine if it is fully within the requested range. If it is, we use $vfs\_write()$ to write this page to a file. To ensure the safety, we also do a page walk the retrieve the \texttt{pte} of an virtual address. If \texttt{pte \&\& pte\_read(*pte)}, we write this page to a file. The page walk is performed in $lookup\_address\_userspace()$ function.
+
+\begin{lstlisting}[style=CStyle]
+pte_t *lookup_address_userspace(struct mm_struct* mm, unsigned long address)
+{
+    pgd_t *pgd;
+    //pud_t *pud;
+    pmd_t *pmd;
+    pte_t *pte;
+
+    pgd = pgd_offset(mm, address);
+
+    if (pgd_none(*pgd) || pgd_bad(*pgd))
+        return NULL;
+    
+    pmd = pmd_offset(pgd, address);
+    if (pmd_none(*pmd)||pmd_bad(*pmd)||!pmd_present(*pmd))
+        return NULL;
+    
+    pte = pte_offset_kernel(pmd, address);
+    if (pte_none(*pte)||!pte_present(*pte))
+        return NULL;
+    return pte;
+}
+\end{lstlisting}
+
+\begin{lstlisting}[style=CStyle]
+void traverse(void){
+    struct task_struct *tsk;
+    struct vm_area_struct *area;
+    struct mm_struct *mm;
+    int ret;
+    unsigned long addr;
+    struct page *page;
+    pte_t *pte;
+    printk("enter traverse\n");
+
+    ret = open_file();
+    if (ret > -1) {
+        tsk = current;
+        if (tsk->mm) {
+            mm = tsk->mm;
+            area = tsk->mm->mmap;
+            while (area) {
+                printk("vm_start: %lx, vm_end: %lx\n", area->vm_start, area->vm_end);        
+                addr = area->vm_start;
+                    
+                while (addr < area->vm_end) {
+                    if (addr+PAGE_SIZE-1 <= area->vm_end && addr>=cp_start && addr+PAGE_SIZE-1<=cp_end) {
+                        pte = lookup_address_userspace(mm,addr);
+                        if (!pte) 
+                                continue;
+                        page = pte_page(*pte);
+                        if (page == NULL) {
+                            printk("ERROR finding page!\n");
+                            return;
+                        }
+                                                                                                             
+                        if (pte && pte_read(*pte)) {
+                            vfs_write(filp, (void*)addr, PAGE_SIZE, &pos);
+                            vfs_write(filp, "\n", 1, &pos);
+                            printk("addr written: %lx\n", addr);
+                        }
+                    }
+                    addr += PAGE_SIZE;
+                }
+                area = area->vm_next;
+            }
+        }
+        printk("exit traverse\n");
+    }
+    close_file();
+}
+
+\end{lstlisting}
+
+
+\subsubsection{Writing to a File}
+We use $vfs\_write()$ function to write to a file. We defined three global variables $pos, old_fs, filp$ and two helper functions, $open\_file()$ and $close\_file()$, which are called in $traverse()$. 
+
+\begin{lstlisting}[style=CStyle]
+loff_t pos = 0;
+mm_segment_t old_fs;
+struct file *filp = NULL;
+int open_file(void){
+    printk("enter open_file\n");
+    snprintf(filename,sizeof(filename),"%s%d","cp_out_",file_count);
+                
+    old_fs = get_fs();
+    set_fs(KERNEL_DS);
+    filp = filp_open(filename, O_WRONLY|O_CREAT, 0644);
+    if (IS_ERR(filp))
+    {
+        printk("OPEN ERROR!\n");
+        return -1;
+    }   
+    printk("exit open_file\n");
+    return 0;
+                                        
+}
+
+void close_file(void){
+    printk("enter close_file\n");
+    filp_close(filp,NULL);
+    set_fs(old_fs);
+    pos = 0;
+    printk("exit close_file\n");
+}
+\end{lstlisting}
+\section{Incremental Checkpointing Scheme}
+\subsection{High-level Design}
+explain the high-level idea
+\subsection{Implementation}
+detailed implementation
+
+%\newpage
+%\bibliographystyle{plain}
+\bibliography{Group8}
+\end{document}
+
+
+
+
+
+
+
