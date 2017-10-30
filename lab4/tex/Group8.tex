@@ -132,7 +132,6 @@ void traverse(void){
     struct mm_struct *mm;
     int ret;
     unsigned long addr;
-    struct page *page;
     pte_t *pte;
     printk("enter traverse\n");
 
@@ -145,18 +144,10 @@ void traverse(void){
             while (area) {
                 printk("vm_start: %lx, vm_end: %lx\n", area->vm_start, area->vm_end);        
                 addr = area->vm_start;
-                    
-                while (addr < area->vm_end) {
-                    if (addr+PAGE_SIZE-1 <= area->vm_end && addr>=cp_start && addr+PAGE_SIZE-1<=cp_end) {
+                while (addr +PAGE_SIZE <= area->vm_end) {
+                    if (addr>=cp_start && addr+PAGE_SIZE <=cp_end) {
                         pte = lookup_address_userspace(mm,addr);
-                        if (!pte) 
-                                continue;
-                        page = pte_page(*pte);
-                        if (page == NULL) {
-                            printk("ERROR finding page!\n");
-                            return;
-                        }
-                                                                                                             
+                                                               
                         if (pte && pte_read(*pte)) {
                             vfs_write(filp, (void*)addr, PAGE_SIZE, &pos);
                             vfs_write(filp, "\n", 1, &pos);
