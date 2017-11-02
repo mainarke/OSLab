@@ -201,12 +201,82 @@ void close_file(void){
 \end{lstlisting}
 \section{Incremental Checkpointing Scheme}
 \subsection{High-level Design}
-explain the high-level idea
-\subsection{Implementation}
-detailed implementation
 
-%\newpage
-%\bibliographystyle{plain}
+In this section, the following three questions are answerd at conceptual design level:
+\begin{enumerate}[(1)]
+\item How does your scheme achieve the incremental checkpointing? 
+\item What are the special cases your scheme need to handle? 
+\item How does your scheme handle these special cases? 
+\end{enumerate}
+
+\subsubsection{The Scheme of Incremental Checkpointing}
+
+We design our incremental checkpointing by borrowing the idea of Copy-on-Write(COW). In the incremental checkpointing, after finishing checkpointing for a certain page, we mark it as read-only by setting the corresponding bit of its page table entry to zero. If there are no write operations to this page afterwards, during the next checkpoint, we can skip this page by checking whether its state is still read-only. On the other hand, if writes to that page indeed happens after the first checkpointing, the fore-mentioned bit in the page table entry will be changed to one (writable) during the page fault handling procedure. 
+
+\subsubsection{Special Cases}
+
+The method described in the previous section suffices to achieve our incremental checkpointing except the special cases which will change the state of table page entry as wirte protect as well.  
+
+For example, if fork system call is invoked in the process where we are going to perform checkpointing, the writable bit in the page table entry can be "overrided" to zero even though writes really happened before. As a result, we will falsely miss to perform checkpointing for those pages.
+
+\subsubsection{How to Handle Special Cases}
+
+To address this issue, an unused bit in the page table entry will be used to serve as a flag bit (we call it override bit here) to record the situations where writable bit of a page table entry is modified to zero by other sources besides our increamental memory checkpointing mechanism. Then, during the next checkpointing, we will perform the memory checkpointing for the pages whose state is either writable or overrided. 
+
+\subsection{Implementation}
+
+In this section, we describe the implementation details of our incremental checkpointing mechanism. 
+
+\subsubsection{Modification to the Kernel}
+
+In the header file of $include/asm-i386/pgtable.h$, we added two utility functions to facilitate the use of our newly introduced override bit. 
+
+Function $pte\_override()$ returns the override bit and function $pte\_clearoverride\_and\_wrprotect()$ sets both the writable and override bit to zero.
+
+\begin{lstlisting}[style=CStyle]
+static inline int pte_override(pte_t pte)       
+{ return (pte).pte_low & _PAGE_UNUSED1; }
+
+static inline pte_t pte_clearoverride_and_wrprotect(pte_t pte)  
+{ (pte).pte_low &= ~_PAGE_RW; (pte).pte_low &= ~_PAGE_UNUSED1; return pte; }
+\end{lstlisting}
+
+Also, we modified the existing fucntions which will set pte state as write protect.
+
+\begin{lstlisting}[style=CStyle]
+static inline pte_t pte_wrprotect(pte_t pte)   
+{ (pte).pte_low &= ~_PAGE_RW; (pte).pte_low |= _PAGE_UNUSED1; return pte; }
+
+static inline void ptep_set_wrprotect(pte_t *ptep)              
+{ clear_bit(_PAGE_BIT_RW, &ptep->pte_low); set_bit(_PAGE_BIT_UNUSED1, &ptep->pte_low);}
+\end{lstlisting}
+
+\subsubsection{Modification to the Basic Checkpointing Mechanism}
+
+We extended our basic checkpointing mechanism to support incremental checkpointing. The modifications to the basic mechanism consist of two parts. 
+
+First, as shown in the line 2, we only perform memory checkpointing for the pages whose state is writable or overdid, which means either these pages have been written or its writable bit has been overrided to zero (e.g., due to COW) before. 
+
+Second, after checkpointing, we change the state of pages to write protect and not overrided by flipping the corresponding flag bits in the page table entry, which is achieved by simply invoking the newly introduced $pte\_clearoverride\_and\_wrprotect()$ function. After that, we also need to update the entry in the page table as well as flush cache. By doing this, we can skip the memory checkpointing for the pages the state of which are not written and not overrided. 
+
+\begin{lstlisting}[style=CStyle]
+if ( pte && pte_read(*pte)) {
+    if (pte_write(*pte) || pte_override(*pte)) {
+        vfs_write(filp, (void*)addr, PAGE_SIZE, &pos);
+        vfs_write(filp, "\n", 1, &pos);
+        printk("addr written: %lx\n", addr);
+    }
+    spin_lock(&mm->page_table_lock);
+    wrprotect_notoverride_pte = pte_clearoverride_and_wrprotect(*pte);
+    set_pte(pte, wrprotect_notoverride_pte);
+    flush_cache_page(area, area->vm_start);
+    ptep_establish(area, area->vm_start, pte, wrprotect_notoverride_pte);
+    update_mmu_cache(area, area->vm_start, wrprotect_notoverride_pte);
+    spin_unlock(&mm->page_table_lock);
+}
+
+\end{lstlisting}
+
 \bibliography{Group8}
 \end{document}
 
